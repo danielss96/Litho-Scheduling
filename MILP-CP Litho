@@ -1,0 +1,249 @@
+from docplex.mp.model import Model
+from docplex.mp.progress import *
+from docplex.cp.model import *
+import docplex.cp.utils_visu as visu
+from pylab import rcParams
+import time
+
+
+def solve_master_problem(items, reticles, machines, periods, D, PT, PC, IC, BC, Req, B):
+    start_time = time.time()
+
+    # Create and setup model
+    Master = Model()
+    Master.add_progress_listener(TextProgressListener())
+
+    Master.set_time_limit(60 * 40)
+
+    # Decision Variables
+
+    x = {(i, m, r, t): Master.binary_var(name="X_{0}_{1}_{2}_{3}".format(i, m, r, t)) for i in items
+         for m in machines for r in reticles for t in periods}
+    z = {(i, m, t): Master.integer_var(name="Z_{0}_{1}_{2}".format(i, m, t)) for i in items for m in machines
+         for t in periods}
+    q = {(i, t): Master.integer_var(name="I_{0}_{1}".format(i, t)) for i in items for t in periods}
+    u = {(i, t): Master.integer_var(name="U_{0}_{1}".format(i, t)) for i in items for t in periods}
+
+    # Decision Expression
+    Setup_Cost = Master.sum(x[i, m, r, t] * PC[i] for i in items for t in periods for m in machines for r in reticles)
+    Inventory_Cost = Master.sum(q[i, t] * IC[i] for i in items for t in periods)
+    Backlog_Cost = Master.sum(u[i, t] * BC[i] for i in items for t in periods)
+    Total_Cost = Setup_Cost + Inventory_Cost + Backlog_Cost
+
+    # Objective
+    Master.minimize(Total_Cost)
+
+    for i in items:
+        for t in periods:
+            if t == 0:
+                Master.add_constraint(Master.sum(z[i, m, t] for m in machines) + u[i, t] == D[i][t] + q[i, t])
+            else:
+                Master.add_constraint(
+                    q[i, t - 1] + Master.sum(z[i, m, t] for m in machines) + u[i, t] == D[i][t] + q[i, t]
+                    + u[i, t - 1])
+
+    for i in items:
+        for m in machines:
+            for t in periods:
+                Master.add_constraint(0 >= z[i, m, t] - B * Master.sum(x[i, m, r, t] for r in reticles))
+
+    for m in machines:
+        for t in periods:
+            Master.add_constraint(Master.sum(z[i, m, t] * PT[i] for i in items) <= L)
+
+    for i in items:
+        for r in reticles:
+            for m in machines:
+                for t in periods:
+                    if r not in Req[i]:
+                        Master.add_constraint(x[i, m, r, t] <= 0, ctname="Ensures reticle compatibility")
+
+    # Solve Model
+    solution = Master.solve()
+    # Compute Lot-Sizing Solving Time
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    print("Elapsed Time:", elapsed_time)
+
+    # Print Costs Solution
+    if solution:
+        print("Total Cost: ", solution.objective_value)
+        print("Setup Costs: ", solution.get_value(Setup_Cost))
+        print("Inventory Costs: ", solution.get_value(Inventory_Cost))
+        print("Backlog Costs: ", solution.get_value(Backlog_Cost))
+
+        # Print the solution values for x
+        print("Solution values for x:")
+        for (i, m, r, t), var in x.items():
+            print(f"x[{i}, {m}, {r}, {t}] = {solution.get_value(var)}")
+
+        # Print the solution values for z
+        print("\nSolution values for z:")
+        for (i, m, t), var in z.items():
+            print(f"z[{i}, {m}, {t}] = {solution.get_value(var)}")
+
+    else:
+        print("No solution found")
+
+    return solution, x, z
+
+
+def solve_cp_model(master_solution, x, z, items, reticles, machines, periods, PT, setup_matrix, transport_matrix):
+
+    if master_solution is None:
+        print("No master solution available to solve the CP model.")
+        return
+
+    # Create CP Model
+    cp = CpoModel()
+
+    # Define Interval Variable
+    lot = {}
+    for i in items:
+        for m in machines:
+            for t in periods:
+                for r in reticles:
+                    lot[(i, m, r, t)] = interval_var(optional=True, name="Lot_{}_{}_{}".format(i, m, r, t))
+
+    makespan = {t: integer_var(name="I_{0}".format(t)) for t in periods}
+
+    # Define Sequence Variable for the machines
+    stepper = {m: sequence_var([lot[(i, m, r, t)] for i in items for r in reticles for t in periods],
+                               types=[r for r in reticles for i in items for t in periods],
+                               name="S_{}".format(m)) for m in machines}
+
+    # Define Sequence Variable for the reticles
+    reticle = {r: sequence_var([lot[(i, m, r, t)] for i in items for m in machines for t in periods],
+                               types=[m for m in machines for t in periods for r in reticles],
+                               name="R_{}".format(r)) for r in reticles}
+
+    # Objective Value
+    total_makespan = sum(makespan[t] for t in periods)
+    cp.minimize(total_makespan)
+
+    # Constraints
+    for i in items:
+        for m in machines:
+            for t in periods:
+                for r in reticles:
+                    # Calculates makespan
+                    cp.add(end_of(lot[i, m, r, t]) <= makespan[t])
+
+                    # Ensures the precense of the interval variable if is x = 1 (Master Problem)
+                    cp.add(presence_of(lot[i, m, r, t]) == master_solution.get_var_value(x[i, m, r, t]))
+
+                    # Ensures the interval varaible takes place on its corresponding period
+                    cp.add(start_of(lot[i, m, r, t]) >= L * t * master_solution.get_var_value(x[i, m, r, t]))
+
+                    # Computes the lenght of the interval variable based on the lot-size (Master Problem)
+                    cp.add(length_of(lot[i, m, r, t]) == PT[i] * master_solution.get_var_value(z[i, m, t])
+                           * master_solution.get_var_value(x[i, m, r, t]))
+
+    # No Overlap for machines and setup matrix
+    for m in machines:
+        cp.add(no_overlap(stepper[m], setup_matrix, is_direct=True))
+
+    # No overlap for reticles and transport matrix
+    for r in reticles:
+        cp.add(no_overlap(reticle[r], transport_matrix, is_direct=True))
+
+    # Solve Model
+    cp_solution = cp.solve()
+
+    objective = cp_solution.get_objective_value()
+    print("Makespan:", objective)
+    for (m), var in makespan.items():
+        print(f"zmakespan[{m}] = {cp_solution.get_value(var)}")
+
+    # if objective > L:
+    #    print("cut is needed")
+
+    # Solution Visualization
+    if cp_solution:
+
+        # Picture parameters
+        rcParams['figure.figsize'] = 8, 4
+        visu.timeline('Solution for Lot Sizing Problem')
+        visu.panel('Machines')
+
+        # Get name of Items
+        product = dict()
+        for m in machines:
+            for i in items:
+                for r in reticles:
+                    for t in periods:
+                        product[lot[i, m, r, t].get_name()] = i
+
+        # Get solution of the sequencing of interval variables
+        seq = {m: [] for m in machines}
+        for m in machines:
+            seq[m] = cp_solution.get_var_solution(stepper[m])
+            visu.sequence(name=f"Machine {m}")
+            vs = seq[m].get_value()
+
+            # Add intervals to the visulization
+            for v in vs:
+                nm = v.get_name()
+                visu.interval(v, product[nm] + 1, str(product[nm]))
+
+            # Add setup transition matrix to the visulization
+            for i in range(len(vs) - 1):
+                end = vs[i].get_end()
+                i1 = product[vs[i].get_name()]
+                i2 = product[vs[i + 1].get_name()]
+                visu.transition(end, end + setup_matrix[i1][i2])
+
+        # Display Gantt
+        visu.show()
+
+        # Print solutions of the Lots
+        for i in items:
+            for m in machines:
+                for t in periods:
+                    for r in reticles:
+                        lot_var = lot[(i, m, r, t)]
+                        if cp_solution.get_var_solution(lot_var).is_present():
+                            print(cp_solution.get_var_solution(lot_var))
+    else:
+        print("No solution found")
+
+
+I = 5  # Define J
+R = 5
+M = 3  # Define M
+T = 3
+L = 120
+B = L * 2
+
+items = range(0, I)
+reticles = range(0, R)
+machines = range(0, M)
+periods = range(0, T)
+
+PT = [25, 30, 25, 25, 30]
+PC = [20, 20, 20, 20, 20]
+IC = [50, 70, 50, 50, 70]
+BC = [100, 200, 100, 100, 200]
+
+D = [
+    [2, 3, 2],
+    [4, 2, 1],
+    [3, 2, 3],
+    [1, 1, 2],
+    [2, 3, 2]
+]
+
+Req = {
+    0: {0},
+    1: {1},
+    2: {2},
+    3: {3},
+    4: {4}
+}
+
+setup_matrix = [[10 if r1 != r2 else 0 for r2 in reticles] for r1 in reticles]
+transport_matrix = [[5 if m1 != m2 else 0 for m2 in machines] for m1 in machines]
+
+# Run the functions
+master_solution, x, z = solve_master_problem(items, reticles, machines, periods, D, PT, PC, IC, BC, Req, B)
+solve_cp_model(master_solution, x, z, items, reticles, machines, periods, PT, setup_matrix, transport_matrix)
