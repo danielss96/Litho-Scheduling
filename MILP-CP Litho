@@ -25,13 +25,13 @@ def solve_master_problem(items, reticles, machines, periods, D, PT, PC, IC, BC, 
     u = {(i, t): Master.integer_var(name="U_{0}_{1}".format(i, t)) for i in items for t in periods}
 
     # Decision Expression
-    Setup_Cost = Master.sum(x[i, m, r, t] * PC[i] for i in items for t in periods for m in machines for r in reticles)
-    Inventory_Cost = Master.sum(q[i, t] * IC[i] for i in items for t in periods)
-    Backlog_Cost = Master.sum(u[i, t] * BC[i] for i in items for t in periods)
-    Total_Cost = Setup_Cost + Inventory_Cost + Backlog_Cost
+    setup_cost = Master.sum(x[i, m, r, t] * PC[i] for i in items for t in periods for m in machines for r in reticles)
+    inventory_cost = Master.sum(q[i, t] * IC[i] for i in items for t in periods)
+    backlog_cost = Master.sum(u[i, t] * BC[i] for i in items for t in periods)
+    total_cost = setup_cost + inventory_cost + backlog_cost
 
     # Objective
-    Master.minimize(Total_Cost)
+    Master.minimize(total_cost)
 
     for i in items:
         for t in periods:
@@ -60,17 +60,18 @@ def solve_master_problem(items, reticles, machines, periods, D, PT, PC, IC, BC, 
 
     # Solve Model
     solution = Master.solve()
+
     # Compute Lot-Sizing Solving Time
     end_time = time.time()
     elapsed_time = end_time - start_time
     print("Elapsed Time:", elapsed_time)
 
-    # Print Costs Solution
+    # Print Solution Costs
     if solution:
         print("Total Cost: ", solution.objective_value)
-        print("Setup Costs: ", solution.get_value(Setup_Cost))
-        print("Inventory Costs: ", solution.get_value(Inventory_Cost))
-        print("Backlog Costs: ", solution.get_value(Backlog_Cost))
+        print("Setup Costs: ", solution.get_value(setup_cost))
+        print("Inventory Costs: ", solution.get_value(inventory_cost))
+        print("Backlog Costs: ", solution.get_value(backlog_cost))
 
         # Print the solution values for x
         print("Solution values for x:")
@@ -86,7 +87,6 @@ def solve_master_problem(items, reticles, machines, periods, D, PT, PC, IC, BC, 
         print("No solution found")
 
     return solution, x, z
-
 
 def solve_cp_model(master_solution, x, z, items, reticles, machines, periods, PT, setup_matrix, transport_matrix):
 
@@ -152,11 +152,10 @@ def solve_cp_model(master_solution, x, z, items, reticles, machines, periods, PT
 
     objective = cp_solution.get_objective_value()
     print("Makespan:", objective)
-    for (m), var in makespan.items():
-        print(f"zmakespan[{m}] = {cp_solution.get_value(var)}")
-
-    # if objective > L:
-    #    print("cut is needed")
+    for (t), var in makespan.items():
+        print(f"makespan[{t}] = {cp_solution.get_value(var)}")
+        if cp_solution.get_value(var) > L + L*t:
+            print("cut is needed\n")
 
     # Solution Visualization
     if cp_solution:
@@ -208,17 +207,17 @@ def solve_cp_model(master_solution, x, z, items, reticles, machines, periods, PT
         print("No solution found")
 
 
-I = 5  # Define J
-R = 5
-M = 3  # Define M
-T = 3
+nb_items = 5
+nb_reticles = 5
+nb_machines = 3
+nb_periods = 3
 L = 120
 B = L * 2
 
-items = range(0, I)
-reticles = range(0, R)
-machines = range(0, M)
-periods = range(0, T)
+items = range(0, nb_items)
+reticles = range(0, nb_reticles)
+machines = range(0, nb_machines)
+periods = range(0, nb_periods)
 
 PT = [25, 30, 25, 25, 30]
 PC = [20, 20, 20, 20, 20]
@@ -246,4 +245,5 @@ transport_matrix = [[5 if m1 != m2 else 0 for m2 in machines] for m1 in machines
 
 # Run the functions
 master_solution, x, z = solve_master_problem(items, reticles, machines, periods, D, PT, PC, IC, BC, Req, B)
+
 solve_cp_model(master_solution, x, z, items, reticles, machines, periods, PT, setup_matrix, transport_matrix)
