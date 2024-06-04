@@ -290,7 +290,7 @@ def generate_model(mdl):
                                         for s2 in Positions:
                                             for s3 in Positions:
                                                 mdl.add_constraint(r_start[r, s, t] >= TT[(m2, m1)]
-                                                                   + r_end[r, s3, t - 1] - L - B *
+                                                                   + r_end[r, s3, t - 1] - L
                                                                    - B * (4 - x[i2, m2, s1, t - 1]
                                                                             - x[i, m1, s2, t]
                                                                             - y[i2, r, s3, t - 1]
