@@ -12,7 +12,7 @@ import json
 # ----------------------------------------------------------------------------------------------------------------------
 
 # Read instance data from: "Instance_xx"
-instance_name = "Instance_01"
+instance_name = "Instance_02"
 
 # Results display:
 gantt_machine = True
@@ -27,12 +27,12 @@ presolve = 1
 # Data and Sets
 # ----------------------------------------------------------------------------------------------------------------------
 
-# Read instance data
-json_path = "Instances/" + instance_name + ".json"
+# Open .json file instance data
+json_path = "Instances/Small_Instances/" + instance_name + ".json"
 with open(json_path, "r") as file:
     data = json.load(file)
 
-    # Extract data from .json file
+    # Read data from file
     I = data["nb_items"]
     R = data["nb_reticles"]
     M = data["nb_machines"]
@@ -47,19 +47,18 @@ with open(json_path, "r") as file:
     Transport = data["TT"]
     Setup = data["ST"]
 
-# Create Sets
-Items = range(0, I)         # Set of Items
-Reticles = range(0, R)      # Set of Reticles
-Machines = range(0, M)      # Set of Machines
-Periods = range(0, T)       # Set of Periods
-
+# Sets
+Items = range(0, I)                         # Set of Items
+Reticles = range(0, R)                      # Set of Reticles
+Machines = range(0, M)                      # Set of Machines
+Periods = range(0, T)                       # Set of Periods
 S = int(max(L / PT[i] for i in Items))      # Number of Positions
 Positions = range(0, S)                     # Set of Positions
+Req = {i: [i] for i in Items}               # Reticles that can process job i
 
-# Create Matrices
-TT = {(m1, m2): Transport if m1 != m2 else 0 for m1 in Machines for m2 in Machines}     # Tranport Times Matrix
-ST = {(r1, r2): Setup if r1 != r2 else 0 for r1 in Reticles for r2 in Reticles}         # Setup Times Matrix
-Req = {i: [i] for i in Items}
+# Matrices
+TT = {(m1, m2): Transport if m1 != m2 else 0 for m1 in Machines for m2 in Machines}     # Tranport Time Matrix
+ST = {(r1, r2): Setup if r1 != r2 else 0 for r1 in Reticles for r2 in Reticles}         # Setup Time Matrix
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -87,10 +86,11 @@ def main():
     print("Backlog Costs:", solution.get_value(backlog_cost))
     print("Inventory Costs:", solution.get_value(holding_cost))
 
-    # Print Gantt charts
+    # Print Machines Gantt chart
     if gantt_machine:
         display_machine_gantt(solution, x, m_start, m_end)
 
+    # Print Reticles Gantt chart
     if gantt_reticle:
         display_reticle_gantt(solution, y, r_start, r_end)
 
