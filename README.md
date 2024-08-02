@@ -1,4 +1,1 @@
-2 Models are uploaded in this repository:
-    1. ILSSP MILP: Solves the problem through classical Branch and Bound approach by using the commercial 
-                   solver CPLEX.
-    2: ILSSP BD:   Solves the problem thorugh Logic-Based Bender Decomposition approach.
+2 Models are uploaded in this repository: A MILP model to solve the ILSP which is solved to commercial software CPLEX and a model using the Logic-Based Bender Decomposition approach. For the latter, also CP-Optimizer is used. Therefore, it is important to include the path to the personal CP-Optimizer in line 257 of the code (ILSP_LBBD). To read an instance, both model have a field at the beggining of the code called "instance_name", in this field just substitute for the number of the desired instances in the format "Instance_xx". All 80 instances are available in the folder "Instances".
