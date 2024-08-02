@@ -9,14 +9,14 @@ from docplex.cp.model import CpoParameters
 import docplex.cp.utils_visu as visu
 from pylab import rcParams
 import time
-import random
 import json
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Data, Sets and Parameters
+# Read Data
 # ----------------------------------------------------------------------------------------------------------------------
-"""
-instance_name = "Instance_43"
+
+# Read data from Instance:"
+instance_name = "Instance_71"
 
 # Read instance data
 json_path = "Instances/" + instance_name + ".json"
@@ -37,17 +37,7 @@ with open(json_path, "r") as file:
     BC = data["BC"]
     ST = data["ST"]
     TT = data["TT"]
-
-"""
-# Data
-nb_items = 60        # Number of items
-nb_reticles = 60     # Number of reticles
-nb_machines = 12     # Number of machines
-nb_periods = 3      # Number of periods
-L = 1440             # Length of periods
-ST = 5             # Set up times
-TT = 30
-B = L * 2           # Large positive value
+    Ri = data["Ri"]
 
 # Sets
 items = range(0, nb_items)          # Set of items
@@ -55,19 +45,10 @@ reticles = range(0, nb_reticles)    # Set of reticles
 machines = range(0, nb_machines)    # Set of machines
 periods = range(0, nb_periods)      # Set of periods
 
-# Parameters
-
-D = [[random.randint(5, 10) for t in periods] for i in items]
-PT = [random.randint(20, 25) for i in items]         # Processing times
-SC = [random.randint(20, 50) for i in items]         # Setup Costs
-HC = [random.randint(50, 75) for i in items]         # Holding Costs
-BC = [random.randint(100, 200) for i in items]       # Backlog costs
-
 Ib = {(m, t): set() for m in machines for t in periods}        # Empty array of Items' sets for No_Good cuts
 zb = {(i, m, t): 0 for i in items for m in machines for r in reticles for t in periods}   # Empty array for No-Good cuts
-setup_matrix = [[ST if r1 != r2 else 0 for r2 in reticles] for r1 in reticles]         # Setup times
-transport_matrix = [[TT if m1 != m2 else 0 for m2 in machines] for m1 in machines]     # Transport times
-Ri = {i: [i] for i in items}
+setup_matrix = [[ST if r1 != r2 else 0 for r2 in reticles] for r1 in reticles]            # Setup times
+transport_matrix = [[TT if m1 != m2 else 0 for m2 in machines] for m1 in machines]        # Transport times
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -75,59 +56,39 @@ Ri = {i: [i] for i in items}
 # ----------------------------------------------------------------------------------------------------------------------
 def main():
 
-    # Print randomized Parameters
-    print("Parameters:\n")
-    print("D =", D)
-    print("PT =", PT)
-    print("SC =", SC)
-    print("HC =", HC)
-    print("BC =", BC, "\n")
-
-    # Generate MILP and CP Model
-    master = Model(name='Lot Sizing')
-    cp = CpoModel(name='Scheduling')
-
-    # Set Timer and Iterations Counter
-    iteration = 1
+    #Start Timer
     start_time = time.time()
 
-    # Create the Master Problem as MILP (Lot sizing)
+    # Create an empty model
+    master = Model(name='Master Problem')
+
+    # Define Master Problem
     master, x, z, setup_cost, holding_cost, backlog_cost = master_model(master)
 
-    # Solve the Master Problem
-    master_solution = solve_master(master)
+    # Flag to stop the iterations when "True"
+    feasible_solution_found = False
 
-    # Create the Subproblem as CP (Scheduling)
-    cp, lot, stepper, reticle, makespan = subproblem_model(cp, master_solution, x, z)
+    # Iteration loop
+    while not feasible_solution_found:
 
-    # Solve the Subproblem
-    cp_solution = solve_subprobblem(cp)
-
-    # Validate if Master Problem Solution is feasible
-    infeasibility = validate_solution(master_solution, cp_solution, z, makespan, lot)
-
-    while infeasibility:
-
-        # Add a Benders cut to the Master Problem
-        master = add_bender_cut(master, z)
-
-        # Clean the previous CP model
-        cp = CpoModel(name='Scheduling')
-
-        # Solve the new Master Problem
+        # Solve Master Problem
         master_solution = solve_master(master)
 
-        # Create the Subproblem with the new Master Problem Solution
+        # Greate an empty CP model
+        cp = CpoModel(name='Sub-Problem')
+
+        # Define Sub Problem
         cp, lot, stepper, reticle, makespan = subproblem_model(cp, master_solution, x, z)
 
-        # Solve the new Subproblem
+        # Solve Sub-Problem
         cp_solution = solve_subprobblem(cp)
 
-        # Validate if new Master Problem Solution is feasible
-        infeasibility = validate_solution(master_solution, cp_solution, z, makespan, lot)
+        # Validate if Solution is feasible.
+        feasible_solution_found = validate_solution(master_solution, cp_solution, z, makespan, lot)
 
-        # Increase the iteration counter
-        iteration += 1
+        # Add a Benders cut to the Master Problem if solution is not feasible
+        if not feasible_solution_found:
+            master = add_bender_cut(master, z)
 
     # Stop timer
     end_time = time.time()
@@ -135,17 +96,11 @@ def main():
     # Display Gantt Chart for the feasible solution
     dispaly_gantt(cp_solution, makespan, lot, stepper, reticle)
 
-    # Print Results
+    # Print Timer
     print("\nElapsed Time:", end_time - start_time)
-    print("Total Iterations:", iteration)
-    print("\nTotal Cost:", master_solution.get_objective_value())
-    print("----------------------")
-    print("Setup Cost:", master_solution.get_value(setup_cost))
-    print("Holding Cost:", master_solution.get_value(holding_cost))
-    print("Backlog Cost:", master_solution.get_value(backlog_cost))
 
-    # Save instance parameters as .json file
-    save_data()
+    # Print Objective Value
+    print("\nTotal Cost:", master_solution.get_objective_value())
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -154,10 +109,9 @@ def main():
 def master_model(master):
 
     # CPLEX Solver Parameters
-    master.add_progress_listener(TextProgressListener())
-    master.parameters.mip.tolerances.integrality.set(1e-12)
-    master.set_time_limit(320)
-    master.parameters.emphasis.memory = 1
+    master.add_progress_listener(TextProgressListener())    # Print Log
+    master.set_time_limit()                                 # Time Limit
+    master.parameters.emphasis.memory = 0                   # Memory emphasis
 
     # Decision Variables
     x = {(i, m, r, t): master.binary_var(name="X_{0}_{1}_{2}_{3}".format(i, m, r, t)) for i in items
@@ -188,6 +142,7 @@ def master_model(master):
                     + u[i, t - 1])
 
     # Ensures x = 1 if: Lot I is processed in machine m, microperiod t, with a compatible reticle r
+    # B = max demand plus 25% rounded up
     for i in items:
         for m in machines:
             for t in periods:
@@ -227,12 +182,13 @@ def subproblem_model(cp, master_solution, x, z):
 
     # CP Optimizer Parameters
     param = CpoParameters()
-    param.RelativeOptimalityTolerance = 0.01
+    param.Workers = 8                           # Number of Workers (Default 8)
+    param.RelativeOptimalityTolerance = 0.0     # Optimality Gap Criteria
     cp.set_parameters(param)
 
     if master_solution:
 
-        # Define Interval Variable
+        # Interval Variables
         lot = {}
         for i in items:
             for m in machines:
@@ -245,14 +201,16 @@ def subproblem_model(cp, master_solution, x, z):
                                    types=[r for r in reticles for _ in items for _ in periods],
                                    name="S_{}".format(m)) for m in machines}
 
-        # Define Sequence Variable for the reticles
+        # Define Sequence Variable for the reticles (auxiliary resource)
         reticle = {r: sequence_var([lot[(i, m, r, t)] for m in machines for t in periods],
                                    types=[m for m in machines for _ in periods],
                                    name="R_{}".format(r)) for i in items for r in Ri[i]}
 
-        # Objective Value
+        # Decision Expresion
         makespan = {t: integer_var(name="I_{0}".format(t)) for t in periods}
         period_makespan = sum(makespan[t] for t in periods)
+
+        # Objective
         cp.minimize(period_makespan)
 
         # Constraints
@@ -264,9 +222,12 @@ def subproblem_model(cp, master_solution, x, z):
                         cp.add(end_of(lot[i, m, r, t]) <= makespan[t])
 
                         # Ensures the precense of the interval variable if is x = 1 (master Problem)
-                        cp.add(presence_of(lot[i, m, r, t]) == master_solution.get_var_value(x[i, m, r, t]))
+                        if master_solution.get_var_value(x[i, m, r, t]) > 0.1:
+                            cp.add(presence_of(lot[i, m, r, t]) == 1)
+                        else:
+                            cp.add(presence_of(lot[i, m, r, t]) == 0)
 
-                        # Ensures the interval varaible takes place on its corresponding period
+                        # Ensures the interval varaible is scheduled on its corresponding period
                         cp.add(start_of(lot[i, m, r, t]) >= L * t * master_solution.get_var_value(x[i, m, r, t]))
 
                         # Computes the lenght of the interval variable based on the lot-size (master Problem)
@@ -284,7 +245,7 @@ def subproblem_model(cp, master_solution, x, z):
         return cp, lot, stepper, reticle, makespan
 
     else:
-        print("No master solution found to solve the CP model.")
+        print("No Master Problem solution")
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -292,8 +253,10 @@ def subproblem_model(cp, master_solution, x, z):
 # ----------------------------------------------------------------------------------------------------------------------
 def solve_subprobblem(cp):
 
-    # Solve Model
+    # Note: Personal path to CP-Optimizer must be written here
     cpoptimizer_path = 'C:\\Program Files\\IBM\\ILOG\\CPLEX_Studio2211\\cpoptimizer\\bin\\x64_win64\\cpoptimizer.exe'
+
+    # Solve Sub-Problem
     cp_solution = cp.solve(execfile=cpoptimizer_path)
 
     return cp_solution
@@ -308,16 +271,17 @@ def validate_solution(master_solution, cp_solution, z, makespan, lot):
     if cp_solution:
 
         # Search for makespan infeasibilities (i.e. makespan[t] > L for each micro period)
-        infeasibility = False
+        feasible_solution_found = True
         period_cut = set()
         for t in periods:
             if cp_solution.get_value(makespan[t]) > L * (t + 1):
                 print(f"Infeasible makespan[{t}] = {cp_solution.get_value(makespan[t])}\n")
-                infeasibility = True
+                feasible_solution_found = False
                 period_cut.add(t)
+                break
 
         # If an infeasibility exist:
-        if infeasibility:
+        if not feasible_solution_found:
 
             # To Identify the machine(s) that is causing the infeasible microperiod...:
             for m in machines:
@@ -343,15 +307,14 @@ def validate_solution(master_solution, cp_solution, z, makespan, lot):
                                     # Create a set with the items scheduled in this machine during the microperiod
                                     Ib[m, t].add(i)
                                     # Compute the total lot size of the scheduled items -1 to generate a cut
-                                    # zb[m][t] = sum(master_solution.get_var_value(z[i, m, t]) for i in items) - 1
                                     zb[i, m, t] = master_solution.get_var_value(z[i, m, t])
                                     print(f'zb{i, m, t}:', zb[i, m, t])
                                     break
 
-        return infeasibility
+        return feasible_solution_found
 
     else:
-        print("No solution found")
+        print("No solution found for Sub-Problem exists")
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -360,7 +323,8 @@ def validate_solution(master_solution, cp_solution, z, makespan, lot):
 def dispaly_gantt(cp_solution, makespan, lot, stepper, reticle):
 
     # Set Gantt parameters
-    rcParams['figure.figsize'] = nb_reticles, nb_reticles * 0.8
+    # Figure size based on the size of the problem (To be done manually)
+    rcParams['figure.figsize'] = 8, 25
     visu.timeline('Reticles Solution for Lot Sizing Problem')
     visu.panel('Reticles')
 
@@ -394,7 +358,7 @@ def dispaly_gantt(cp_solution, makespan, lot, stepper, reticle):
     # Display Reticles Gantt
     visu.show()
 
-    rcParams['figure.figsize'] = nb_periods * 10, nb_machines
+    rcParams['figure.figsize'] = 15, 5
     visu.timeline('Machines Solution for Lot Sizing Problem')
     visu.panel('Machines')
 
@@ -451,38 +415,14 @@ def dispaly_gantt(cp_solution, makespan, lot, stepper, reticle):
 # ----------------------------------------------------------------------------------------------------------------------
 def add_bender_cut(master, z):
 
+    # Add cut pool to the Master Problem
     for m in machines:
         for t in periods:
             if sum(zb[i, m, t] for i in Ib[m, t]) > 0:
                 master.add_constraint(sum(z[i, m, t] for i in Ib[m, t]) <= sum(zb[i, m, t] for i in Ib[m, t]) - 1,
-                                      ctname="No-Good Cut")
+                                      ctname="Benders Cut")
 
     return master
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Save the random generated data of the current instance
-# ----------------------------------------------------------------------------------------------------------------------
-def save_data():
-    data = {
-        "nb_items": nb_items,
-        "nb_reticles": nb_reticles,
-        "nb_machines": nb_machines,
-        "nb_periods": nb_periods,
-        "L": L,
-        "ST": ST,
-        "TT": TT,
-        "B": B,
-        "D": D,
-        "PT": PT,
-        "SC": SC,
-        "HC": HC,
-        "BC": BC
-    }
-
-    filename = "Instances/Instance_111.json"
-    with open(filename, "w") as json_file:
-        json.dump(data, json_file, indent=4)
 
 
 if __name__ == '__main__':
