@@ -12,7 +12,7 @@ import json
 # ----------------------------------------------------------------------------------------------------------------------
 
 # Read instance data from: "Instance_xx"
-instance_name = "Instance_02"
+instance_name = "Instance_'01"
 
 # Results display:
 gantt_machine = True
@@ -28,7 +28,7 @@ presolve = 1
 # ----------------------------------------------------------------------------------------------------------------------
 
 # Open .json file instance data
-json_path = "Instances/Small_Instances/" + instance_name + ".json"
+json_path = "Instances/" + instance_name + ".json"
 with open(json_path, "r") as file:
     data = json.load(file)
 
@@ -67,7 +67,7 @@ ST = {(r1, r2): Setup if r1 != r2 else 0 for r1 in Reticles for r2 in Reticles} 
 def main():
 
     # Initalize model and set timer
-    model = Model()
+    model = Model('Integrated Lot Size and Scheduling Problem')
     start_time = time.time()
 
     # Generate model
@@ -77,14 +77,13 @@ def main():
 
     # Solve model and return total elapsed time
     solution = solve(model)
+
+    # Stop timer
     end_time = time.time()
     print("\nElapsed Time:", end_time - start_time, "\n")
 
     # Print Solution
     print("Total Cost:", solution.get_objective_value(), "\n")
-    print("Setup Costs", solution.get_value(setup_cost))
-    print("Backlog Costs:", solution.get_value(backlog_cost))
-    print("Inventory Costs:", solution.get_value(holding_cost))
 
     # Print Machines Gantt chart
     if gantt_machine:
@@ -104,8 +103,9 @@ def generate_model(mdl):
     mdl.add_progress_listener(TextProgressListener())
     mdl.set_time_limit(solving_time_limit)
     mdl.parameters.preprocessing.presolve(presolve)
+    mdl.parameters.emphasis.memory = 1
 
-    # Decision Variables
+    # Integer Variables
     x = {(i, m, s, t): mdl.binary_var(name="X_{0}_{1}_{2}_{3}".format(i, m, s, t)) for i in Items
          for m in Machines for s in Positions for t in Periods}
     y = {(i, r, s, t): mdl.binary_var(name="Y_{0}_{1}_{2}_{3}".format(i, r, s, t)) for i in Items
@@ -115,7 +115,7 @@ def generate_model(mdl):
     q = {(i, t): mdl.integer_var(name="I_{0}_{1}".format(i, t)) for i in Items for t in Periods}
     u = {(i, t): mdl.integer_var(name="U_{0}_{1}".format(i, t)) for i in Items for t in Periods}
 
-    # Resultant variables
+    # Continuous variables
     m_start = {(m, s, t): mdl.continuous_var(name="m_start_{0}_{1}_{2}".format(m, s, t), lb=0) for m in Machines
                for s in Positions for t in Periods}
     m_end = {(m, s, t): mdl.continuous_var(name="m_end_{0}_{1}_{2}".format(m, s, t), lb=0) for m in Machines
@@ -262,7 +262,7 @@ def generate_model(mdl):
                                                                             - x[i, m, s, t]
                                                                             - y[i2, r2, s1, t - 1]
                                                                             - y[i, r1, s2, t]),
-                                                                   ctname="Setup between micro periods")
+                                                                   ctname="Setup between periods")
 
     for s in range(1, S):
         for i in Items:
@@ -295,7 +295,7 @@ def generate_model(mdl):
                                                                             - x[i, m1, s2, t]
                                                                             - y[i2, r, s3, t - 1]
                                                                             - y[i, r, s, t]),
-                                                                   ctname="Transportation between micro periods")
+                                                                   ctname="Transportation between periods")
 
     return mdl, x, y, z, m_start, m_end, r_start, r_end, setup_cost, holding_cost, backlog_cost
 
